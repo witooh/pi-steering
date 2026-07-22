@@ -26,7 +26,13 @@ steering later and explicitly gives it priority, matching Kiro's behavior.
 
 ## Installation
 
-Install from GitHub:
+Install from npm:
+
+```bash
+pi install npm:@witooh/pi-steering
+```
+
+Alternatively, install directly from GitHub:
 
 ```bash
 pi install git:github.com/witooh/pi-steering

@@ -1,5 +1,5 @@
 {
-  "name": "pi-steering",
+  "name": "@witooh/pi-steering",
   "version": "0.1.0",
   "description": "Load Kiro steering files into Pi",
   "type": "module",
@@ -10,6 +10,9 @@
     "steering"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/witooh/pi-steering.git"
