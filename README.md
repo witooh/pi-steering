@@ -1,46 +1,47 @@
 # pi-steering
 
-Pi extension สำหรับอ่าน
+A Pi extension that reads
 [Kiro Steering](https://kiro.dev/docs/steering/)
-จากโปรเจกต์เดิม โดยไม่ต้องย้ายไฟล์หรือเขียนกฎซ้ำ
+from existing projects without requiring files to be moved or rules to be
+rewritten.
 
-## รองรับ
+## Supported features
 
 <!-- markdownlint-disable MD013 -->
 
-| Kiro Steering | พฤติกรรมใน Pi |
+| Kiro Steering | Behavior in Pi |
 | --- | --- |
-| Global scope | อ่าน `~/.kiro/steering/**/*.md` |
-| Workspace scope | อ่าน `<cwd>/.kiro/steering/**/*.md` เมื่อ project trusted |
-| `inclusion: always` | เพิ่มเนื้อหาใน system prompt ทุก request และเป็นค่า default เมื่อไม่มี frontmatter |
-| `inclusion: fileMatch` | จับคู่ glob กับ path relative จาก workspace และส่ง steering ก่อนทำงานกับไฟล์ |
-| `inclusion: manual` | เรียกด้วย `#ชื่อไฟล์` หรือ `/steering <ชื่อไฟล์>` |
-| `inclusion: auto` | แสดง `name`, `description` และ path ให้ agent โหลดเมื่อ request ตรงคำอธิบาย |
-| `#[[file:path]]` | อ่านไฟล์ relative จาก workspace เข้าบริบทโดยป้องกัน path traversal |
+| Global scope | Reads `~/.kiro/steering/**/*.md` |
+| Workspace scope | Reads `<cwd>/.kiro/steering/**/*.md` when the project is trusted |
+| `inclusion: always` | Adds the content to the system prompt for every request; this is the default when frontmatter is omitted |
+| `inclusion: fileMatch` | Matches globs against workspace-relative paths and injects steering before working with matching files |
+| `inclusion: manual` | Invoked with `#file-name` or `/steering <file-name>` |
+| `inclusion: auto` | Exposes `name`, `description`, and the path so the agent can load relevant steering automatically |
+| `#[[file:path]]` | Reads workspace-relative file content into context while preventing path traversal |
 
 <!-- markdownlint-enable MD013 -->
 
-เมื่อกฎ global และ workspace ขัดกัน extension จะวาง workspace steering
-ไว้ทีหลังและระบุให้ workspace มี priority ตาม Kiro
+When global and workspace instructions conflict, the extension places workspace
+steering later and explicitly gives it priority, matching Kiro's behavior.
 
-## ติดตั้ง
+## Installation
 
-จาก GitHub:
+Install from GitHub:
 
 ```bash
 pi install git:github.com/witooh/pi-steering
 ```
 
-ทดลองจาก checkout นี้โดยไม่ติดตั้ง:
+Try the current checkout without installing it:
 
 ```bash
 npm install
 pi -e .
 ```
 
-Pi โหลด package ผ่าน `pi.extensions` ใน `package.json`
+Pi loads the package through `pi.extensions` in `package.json`.
 
-## ตัวอย่าง
+## Examples
 
 ### Always included
 
@@ -53,7 +54,7 @@ Pi โหลด package ผ่าน `pi.extensions` ใน `package.json`
 - Add tests for behavior changes.
 ```
 
-หรือระบุชัดเจน:
+The mode can also be declared explicitly:
 
 ```markdown
 ---
@@ -74,9 +75,10 @@ fileMatchPattern: ["**/*.ts", "**/*.tsx"]
 # TypeScript conventions
 ```
 
-เมื่อ file tool ของ Pi เปิดหรือแก้ path ที่ตรง pattern
-extension จะเพิ่มกฎนี้เข้าบริบท ถ้าเป็น `edit` หรือ `write` ครั้งแรก
-extension จะ block การแก้หนึ่งรอบและให้ agent retry หลังได้รับกฎแล้ว
+When a Pi file tool opens or modifies a path matching the pattern, the extension
+adds the steering file to the conversation context. For the first matching
+`edit` or `write`, the extension blocks the mutation once and asks the agent to
+retry after the steering instructions have been delivered.
 
 ### Manual inclusion
 
@@ -88,14 +90,15 @@ inclusion: manual
 # Review checklist
 ```
 
-เรียกใช้ได้สองแบบ:
+Invoke manual steering in either form:
 
 ```text
-ตรวจโค้ดนี้ตาม #review
-/steering review ตรวจ staged changes
+Review this code using #review
+/steering review Review the staged changes
 ```
 
-ชื่อ manual steering มาจากชื่อไฟล์ (`review.md` → `review`)
+The manual steering name comes from the filename (`review.md` becomes
+`review`).
 
 ### Auto inclusion
 
@@ -109,38 +112,40 @@ description: REST API conventions. Use when creating or changing API endpoints.
 # API design rules
 ```
 
-Extension ใส่เฉพาะ metadata นี้ใน system prompt
-เพื่อให้ agent ตัดสินใจโหลดเนื้อหาเมื่อเกี่ยวข้อง
-และยังเรียกตรงได้ด้วย `#api-design` หรือ `/steering api-design`
+The extension adds only this metadata to the system prompt so the agent can
+load the full content when the request matches the description. Auto steering
+can also be invoked explicitly with `#api-design` or
+`/steering api-design`.
 
-### Live file reference
+### Live file references
 
 ```markdown
 Follow the contract in #[[file:docs/api.md]].
 ```
 
-Path ต้องอยู่ภายใน workspace และเนื้อหาแต่ละ reference จำกัดไว้ที่ 50 KiB
-เพื่อไม่ให้ context โตเกินจำเป็น
+The path must remain inside the workspace. Each referenced file is limited to
+50 KiB to prevent excessive context growth.
 
-## ข้อจำกัด
+## Limitations
 
-- `fileMatch` trigger อัตโนมัติได้กับ tool call ที่เปิดเผย argument ชื่อ
-  `path`; shell/custom tools ที่ซ่อน path ไว้ใน command จะอาศัย steering
-  index ที่บอก agent ให้โหลดกฎก่อนทำงาน
-- `auto` ใช้การตัดสินใจของ model จาก `description` เช่นเดียวกับแนวคิดของ
-  Kiro จึงควรเขียน description ให้เฉพาะเจาะจง
-- Workspace root คือ current working directory ที่ใช้เปิด Pi
-- ไฟล์ steering ที่ frontmatter ไม่ถูกต้องจะถูกข้ามพร้อม warning
-  แทนการโหลดแบบผิดเงื่อนไข
+- Automatic `fileMatch` activation works for tool calls that expose a `path`
+  argument. Shell commands and custom tools that hide paths inside command text
+  rely on the steering index, which instructs the agent to load matching rules
+  before proceeding.
+- `auto` relies on the model to compare the request with each `description`, so
+  descriptions should be precise and specific.
+- The workspace root is the current working directory used to start Pi.
+- Steering files with invalid frontmatter are skipped with a warning rather
+  than loaded under the wrong inclusion mode.
 
-## พัฒนา
+## Development
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-## แหล่งอ้างอิง
+## References
 
 - Kiro Steering: <https://kiro.dev/docs/steering/>
 - Pi Extensions:
