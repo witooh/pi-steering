@@ -1,0 +1,47 @@
+{
+  "name": "pi-steering",
+  "version": "0.1.0",
+  "description": "Load Kiro steering files into Pi",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "kiro",
+    "steering"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/witooh/pi-steering.git"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "minimatch": "10.2.5",
+    "yaml": "2.9.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.6",
+    "@types/node": "24.12.4",
+    "typescript": "5.9.3",
+    "vitest": "4.1.9"
+  }
+}
