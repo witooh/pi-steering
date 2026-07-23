@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import registerKiroSteering, {
+	collectNamedSteeringReferences,
 	expandNamedSteeringReferences,
 	renderSteeringPrompt,
 } from "../src/index.js";
@@ -13,6 +14,7 @@ interface MockPi {
 	commands: Map<string, any>;
 	sentMessages: any[];
 	sentUserMessages: any[];
+	messageRenderers: Map<string, (...args: any[]) => any>;
 	api: ExtensionAPI;
 }
 
@@ -21,6 +23,7 @@ function createMockPi(): MockPi {
 	const commands = new Map<string, any>();
 	const sentMessages: any[] = [];
 	const sentUserMessages: any[] = [];
+	const messageRenderers = new Map<string, (...args: any[]) => any>();
 	const api = {
 		on: vi.fn((event: string, handler: (...args: any[]) => any) =>
 			handlers.set(event, handler),
@@ -28,12 +31,23 @@ function createMockPi(): MockPi {
 		registerCommand: vi.fn((name: string, command: any) =>
 			commands.set(name, command),
 		),
+		registerMessageRenderer: vi.fn(
+			(customType: string, renderer: (...args: any[]) => any) =>
+				messageRenderers.set(customType, renderer),
+		),
 		sendMessage: vi.fn((message: any, options: any) =>
 			sentMessages.push({ message, options }),
 		),
 		sendUserMessage: vi.fn((message: any) => sentUserMessages.push(message)),
 	} as unknown as ExtensionAPI;
-	return { handlers, commands, sentMessages, sentUserMessages, api };
+	return {
+		handlers,
+		commands,
+		sentMessages,
+		sentUserMessages,
+		messageRenderers,
+		api,
+	};
 }
 
 function fixtureFile(
@@ -96,6 +110,28 @@ describe("expandNamedSteeringReferences", () => {
 	});
 });
 
+describe("collectNamedSteeringReferences", () => {
+	it("returns unique named steering files referenced via #name", () => {
+		const files = [
+			fixtureFile("review", "---\ninclusion: manual\n---\nReview body"),
+			fixtureFile(
+				"api",
+				"---\ninclusion: auto\nname: api-design\ndescription: API rules\n---\nAPI body",
+			),
+		];
+
+		const referenced = collectNamedSteeringReferences(
+			"Use #review and #api-design and #review again, keep #123",
+			files,
+		);
+
+		expect(referenced.map((file) => file.name)).toEqual([
+			"review",
+			"api-design",
+		]);
+	});
+});
+
 describe("Pi extension integration", () => {
 	it("loads trusted steering, expands manual references, and activates fileMatch before writes", async () => {
 		const root = await import("node:fs/promises").then(({ mkdtemp }) =>
@@ -130,18 +166,32 @@ describe("Pi extension integration", () => {
 		);
 		expect(beforeResult.systemPrompt).toContain("Global body");
 
+		expect(mock.messageRenderers.has("kiro-steering")).toBe(true);
+
 		const inputResult = await mock.handlers.get("input")?.(
 			{ source: "interactive", text: "Use #review" },
 			ctx,
 		);
-		expect(inputResult.text).toContain("Review body");
+		// User-visible text stays short; full body goes to a custom message.
+		expect(inputResult).toEqual({ action: "continue" });
+		const namedMessage = mock.sentMessages.at(-1);
+		expect(namedMessage?.message.content).toContain("Review body");
+		expect(namedMessage?.message.details).toMatchObject({
+			steeringFiles: [".kiro/steering/review.md"],
+			names: ["review"],
+		});
 
 		const firstEdit = await mock.handlers.get("tool_call")?.(
 			{ toolName: "edit", input: { path: "src/Button.tsx" } },
 			ctx,
 		);
 		expect(firstEdit).toMatchObject({ block: true });
-		expect(mock.sentMessages.at(-1)?.message.content).toContain("React body");
+		const activated = mock.sentMessages.at(-1);
+		expect(activated?.message.content).toContain("React body");
+		expect(activated?.message.details).toMatchObject({
+			targetPath: "src/Button.tsx",
+			steeringFiles: [".kiro/steering/react.md"],
+		});
 
 		await mock.handlers.get("turn_start")?.({}, ctx);
 		const retryEdit = await mock.handlers.get("tool_call")?.(
@@ -154,7 +204,20 @@ describe("Pi extension integration", () => {
 		await mock.commands
 			.get("steering")
 			.handler("review Check this change", ctx);
-		expect(mock.sentUserMessages.at(-1)).toContain("Review body");
+		const commandMessage = mock.sentMessages.at(-1);
+		expect(commandMessage?.message.content).toContain("Review body");
+		expect(commandMessage?.message.content).toContain(
+			"User request: Check this change",
+		);
+		expect(commandMessage?.message.details).toMatchObject({
+			steeringFiles: [".kiro/steering/review.md"],
+			names: ["review"],
+		});
+		expect(commandMessage?.options).toMatchObject({
+			deliverAs: "steer",
+			triggerTurn: true,
+		});
+		expect(mock.sentUserMessages).toHaveLength(0);
 
 		await import("node:fs/promises").then(({ rm }) =>
 			rm(root, { recursive: true }),

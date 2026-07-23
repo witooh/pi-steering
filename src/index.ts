@@ -1,14 +1,23 @@
 import { homedir } from "node:os";
 import type {
+	BeforeAgentStartEvent,
 	ExtensionAPI,
 	ExtensionContext,
+	InputEvent,
+	MessageRenderOptions,
+	SessionStartEvent,
+	Theme,
+	ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
+import { Box, Text } from "@earendil-works/pi-tui";
 import {
 	discoverSteering,
 	expandFileReferences,
 	matchFileSteering,
 	type SteeringFile,
 } from "./steering.js";
+
+const KIRO_STEERING_TYPE = "kiro-steering";
 
 interface ExtensionOptions {
 	homeDir?: string;
@@ -21,6 +30,12 @@ interface SteeringRuntime {
 	workspaceRoot: string;
 	activeFileRules: Set<string>;
 	pendingFileRules: Set<string>;
+}
+
+interface KiroSteeringDetails {
+	steeringFiles: string[];
+	targetPath?: string;
+	names?: string[];
 }
 
 export default function registerKiroSteering(
@@ -36,23 +51,66 @@ export default function registerKiroSteering(
 		pendingFileRules: new Set(),
 	};
 
-	pi.on("session_start", async (_event, ctx) => startSession(runtime, ctx));
-	pi.on("before_agent_start", async (event, ctx) =>
-		addSteeringPrompt(runtime, event.systemPrompt, ctx),
+	pi.registerMessageRenderer(
+		KIRO_STEERING_TYPE,
+		(
+			message: { details?: KiroSteeringDetails },
+			_options: MessageRenderOptions,
+			theme: Theme,
+		) => {
+			const details = message.details;
+			const files = details?.steeringFiles ?? [];
+			const label = theme.fg("customMessageLabel", `[${KIRO_STEERING_TYPE}]`);
+			const lines = [label];
+
+			if (details?.targetPath) {
+				lines.push(
+					theme.fg("customMessageText", `activated for ${details.targetPath}`),
+				);
+			}
+
+			if (files.length > 0) {
+				for (const file of files) {
+					lines.push(theme.fg("customMessageText", file));
+				}
+			} else if (details?.names && details.names.length > 0) {
+				for (const name of details.names) {
+					lines.push(theme.fg("customMessageText", name));
+				}
+			} else {
+				lines.push(theme.fg("dim", "(no files)"));
+			}
+
+			const box = new Box(1, 1, (t: string) => theme.bg("customMessageBg", t));
+			box.addChild(new Text(lines.join("\n"), 0, 0));
+			return box;
+		},
 	);
-	pi.on("input", async (event, ctx) =>
+
+	pi.on(
+		"session_start",
+		async (_event: SessionStartEvent, ctx: ExtensionContext) =>
+			startSession(runtime, ctx),
+	);
+	pi.on(
+		"before_agent_start",
+		async (event: BeforeAgentStartEvent, ctx: ExtensionContext) =>
+			addSteeringPrompt(runtime, event.systemPrompt, ctx),
+	);
+	pi.on("input", async (event: InputEvent, ctx: ExtensionContext) =>
 		expandInput(runtime, event.source, event.text, ctx),
 	);
 	pi.on("turn_start", () => activatePendingRules(runtime));
-	pi.on("tool_call", async (event) =>
+	pi.on("tool_call", async (event: ToolCallEvent) =>
 		activateMatchingRules(runtime, event.toolName, event.input),
 	);
 
 	pi.registerCommand("steering", {
 		description: "Include a manual or auto Kiro steering file",
-		getArgumentCompletions: (prefix) =>
+		getArgumentCompletions: (prefix: string) =>
 			completeSteeringName(runtime.files, prefix),
-		handler: async (args, ctx) => runSteeringCommand(runtime, args, ctx),
+		handler: async (args: string, ctx: ExtensionContext) =>
+			runSteeringCommand(runtime, args, ctx),
 	});
 }
 
@@ -111,14 +169,20 @@ async function expandInput(
 ) {
 	if (source === "extension") return { action: "continue" as const };
 	await refresh(runtime, ctx);
-	const expanded = await expandNamedSteeringReferences(
-		text,
-		runtime.files,
-		runtime.workspaceRoot,
+	const referenced = collectNamedSteeringReferences(text, runtime.files);
+	if (referenced.length === 0) return { action: "continue" as const };
+
+	// Keep the user-visible text short (#name). Inject full bodies as a
+	// compact custom message so the TUI only shows file names.
+	const rendered = await Promise.all(
+		referenced.map((file) => renderSteeringFile(file, runtime.workspaceRoot)),
 	);
-	return expanded === text
-		? { action: "continue" as const }
-		: { action: "transform" as const, text: expanded };
+	const content = rendered.join("\n\n");
+	await sendSteeringMessage(runtime, content, {
+		steeringFiles: referenced.map((file) => file.displayPath),
+		names: referenced.map((file) => file.name),
+	});
+	return { action: "continue" as const };
 }
 
 function activatePendingRules(runtime: SteeringRuntime): void {
@@ -154,19 +218,12 @@ async function activateMatchingRules(
 	if (newlyPending.length > 0) {
 		for (const file of newlyPending)
 			runtime.pendingFileRules.add(file.absolutePath);
-		runtime.pi.sendMessage(
+		await sendSteeringMessage(
+			runtime,
+			await renderActivatedRules(newlyPending, runtime.workspaceRoot, path),
 			{
-				customType: "kiro-steering",
-				content: await renderActivatedRules(
-					newlyPending,
-					runtime.workspaceRoot,
-					path,
-				),
-				display: true,
-				details: {
-					targetPath: path,
-					steeringFiles: newlyPending.map((file) => file.displayPath),
-				},
+				targetPath: path,
+				steeringFiles: newlyPending.map((file) => file.displayPath),
 			},
 			{ deliverAs: "steer" },
 		);
@@ -224,11 +281,16 @@ async function runSteeringCommand(
 
 	const request = trimmed.slice(name.length).trim();
 	const content = await renderSteeringFile(file, runtime.workspaceRoot);
-	runtime.pi.sendUserMessage(
-		request === "" ? content : `${content}\n\nUser request: ${request}`,
+	const message =
+		request === "" ? content : `${content}\n\nUser request: ${request}`;
+	await sendSteeringMessage(
+		runtime,
+		message,
 		{
-			deliverAs: "steer",
+			steeringFiles: [file.displayPath],
+			names: [file.name],
 		},
+		{ deliverAs: "steer", triggerTurn: true },
 	);
 }
 
@@ -311,6 +373,20 @@ export async function expandNamedSteeringReferences(
 	return result + text.slice(cursor);
 }
 
+/** Collect named steering references in text without expanding bodies. */
+export function collectNamedSteeringReferences(
+	text: string,
+	files: SteeringFile[],
+): SteeringFile[] {
+	const namedFiles = namedSteeringByName(files);
+	const found = new Map<string, SteeringFile>();
+	for (const match of text.matchAll(/#([A-Za-z0-9][A-Za-z0-9-]*)/g)) {
+		const file = namedFiles.get(match[1]);
+		if (file !== undefined) found.set(file.name, file);
+	}
+	return [...found.values()];
+}
+
 async function renderActivatedRules(
 	files: SteeringFile[],
 	workspaceRoot: string,
@@ -328,6 +404,26 @@ async function renderSteeringFile(
 ): Promise<string> {
 	const body = await expandFileReferences(file.body, workspaceRoot);
 	return `<kiro-steering scope=${JSON.stringify(file.scope)} file=${JSON.stringify(file.displayPath)}>\n${body}\n</kiro-steering>`;
+}
+
+async function sendSteeringMessage(
+	runtime: SteeringRuntime,
+	content: string,
+	details: KiroSteeringDetails,
+	options?: {
+		deliverAs?: "steer" | "followUp" | "nextTurn";
+		triggerTurn?: boolean;
+	},
+): Promise<void> {
+	runtime.pi.sendMessage(
+		{
+			customType: KIRO_STEERING_TYPE,
+			content,
+			display: true,
+			details,
+		},
+		options,
+	);
 }
 
 function namedSteeringByName(files: SteeringFile[]): Map<string, SteeringFile> {

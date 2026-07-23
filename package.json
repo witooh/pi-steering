@@ -1,6 +1,6 @@
 {
   "name": "@witooh/pi-steering",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Load Kiro steering files into Pi",
   "type": "module",
   "keywords": [
@@ -39,10 +39,12 @@
     "yaml": "2.9.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "^0.80.6"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.80.6",
+    "@earendil-works/pi-tui": "^0.80.6",
     "@types/node": "24.12.4",
     "typescript": "5.9.3",
     "vitest": "4.1.9"

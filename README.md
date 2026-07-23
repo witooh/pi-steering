@@ -84,7 +84,9 @@ fileMatchPattern: ["**/*.ts", "**/*.tsx"]
 When a Pi file tool opens or modifies a path matching the pattern, the extension
 adds the steering file to the conversation context. For the first matching
 `edit` or `write`, the extension blocks the mutation once and asks the agent to
-retry after the steering instructions have been delivered.
+retry after the steering instructions have been delivered. The TUI shows only
+the steering file path (not the full body); the agent still receives the full
+content.
 
 ### Manual inclusion
 
@@ -104,7 +106,8 @@ Review this code using #review
 ```
 
 The manual steering name comes from the filename (`review.md` becomes
-`review`).
+`review`). Both forms inject the full steering body for the agent while the
+TUI only displays the file name/path.
 
 ### Auto inclusion
 
